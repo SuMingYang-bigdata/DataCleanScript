@@ -1,0 +1,383 @@
+#!/bin/bash
+# Linux基础环境(数据清洗与分析环境,root用户)
+echo -e "==========当前环境使用root用户配置=========="
+username=`whoami`
+if [ ${username} == "root" ];then
+	echo -e "==========当前使用${username}用户=========="
+else
+	exit 1
+fi
+IP="192.168.222.110"
+rm -rf /tmp/*
+echo -e "==========虚拟机ip地址:${IP}==========\n"
+HOSTNAME="master"
+echo -e "==========虚拟机主机名:${HOSTNAME}==========\n"
+software_path="/opt/software"
+echo -e "==========安装包位置路径(tar):${software_path}==========\n"
+java_name="jdk-8u201-linux-x64.tar.gz"
+echo -e "==========java安装包名称:${java_name}==========\n"
+hadoop_name="hadoop-2.6.0.tar.gz"
+echo -e "==========hadoop安装包名称:${hadoop_name}==========\n"
+mysql_name="mysql-5.7.25-linux-glibc2.12-x86_64.tar.gz"
+echo -e "==========mysql安装包名称:${mysql_name}==========\n"
+mysql_connect_name="mysql-connector-java-5.1.47.tar.gz"
+echo -e "==========mysql-connect安装包名称:${mysql_connect_name}==========\n"
+hive_name="apache-hive-1.1.0-bin.tar.gz"
+echo -e "==========hive安装包名称:${hive_name}==========\n"
+sqoop_name="sqoop-1.4.7.bin__hadoop-2.6.0.tar.gz"
+echo -e "==========sqoop安装包名称:${sqoop_name}==========\n"
+spark_name="spark-2.0.0-bin-hadoop2.6.tgz"
+echo -e "==========spark安装包名称:${spark_name}==========\n"
+install_path="/root"
+echo -e "===============安装的文件路径:${install_path}=========="
+
+echo -e "==========临时设置SELinux状态为:Permission==========\n"
+setenforce 0
+selinux_status=`getenforce`
+echo -e "==========当前SELinux状态为:${selinux_status}==========\n"
+echo -e "==========永久关闭SElinux==========\n"
+echo "SELINUX=disabled" > /etc/selinux/config
+echo "SELINUXTYPE=targeted" >> /etc/selinux/config
+echo -e "==========正在关闭防火墙===========\n" 
+systemctl stop firewalld
+echo -e "==========正在设置防火墙开机不自启==========\n" 
+systemctl disable firewalld
+echo -e "==========查看防火墙状态==========\n" 
+systemctl status firewalld
+echo -e "==========正在修改主机名==========\n" 
+hostnamectl set-hostname ${HOSTNAME}
+hostname=`hostname`
+echo -e "==========查看当前主机名:${hostname}==========\n"
+echo -e "==========配置hosts文件==========\n"
+isNull=`grep "${IP} ${HOSTNAME}" /etc/hosts`
+if [ -z ${}  ];then
+	echo "${IP} ${HOSTNAME}" >> /etc/hosts	
+fi
+echo -e "==========测试${HOSTNAME}==========\n"
+ping -c 5 ${HOSTNAME}
+if [ $? -eq 0 ];then
+	echo -e "==========配置${HOSTNAME}的/hosts解析成功==========\n"
+else
+	echo -e "==========配置${HOSTNAME}的/hosts解析失败==========\n"
+fi
+echo -e "==========生成SSH密钥文件==========\n"
+rm -rf /${username}/.ssh
+ssh-keygen -t rsa -P ''
+echo -e "==========配置master公钥信息==========\n"
+ssh-copy-id -i master
+echo -e "==========测试master免密钥==========\n"
+ssh master << eeooff
+echo -e "==========SSH配置成功=============\n"
+exit
+eeooff
+echo -e "==========开始安装java==========\n"
+rm -rf ${install_path}/java
+mkdir ${install_path}/java && tar -xzf ${software_path}/${java_name} -C ${install_path}/java  --strip-components 1
+# 配置环境变量
+echo "export JAVA_HOME=${install_path}/java" >> /etc/profile
+echo "export PATH=\$PATH:\$JAVA_HOME/bin" >> /etc/profile
+source /etc/profile
+echo -e "===========查看java版本==========\n"
+java -version
+echo -e "===========开始安装hadoop===========\n"
+rm -rf ${install_path}/hadoop
+mkdir ${install_path}/hadoop && tar -xzf ${software_path}/${hadoop_name} -C ${install_path}/hadoop   --strip-components 1
+echo "export HADOOP_HOME=${install_path}/hadoop" >> /etc/profile
+echo "export PATH=\$PATH:\$HADOOP_HOME/sbin:\$HADOOP_HOME/bin" >> /etc/profile
+source /etc/profile
+echo -e "===========查看hadoop版本==========\n"
+hadoop version
+cat > ${install_path}/hadoop/etc/hadoop/core-site.xml  << coreEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+	<property>
+		<!--namenode的URL地址-->
+		<name>fs.defaultFS</name>
+		<value>hdfs://${HOSTNAME}:9000</value>
+	</property>
+	<property>
+		<name>hadoop.tmp.dir</name>
+		<value>${install_path}/hadoop/data/tmp</value>
+	</property>
+
+	<property>
+		<!--SequenceFiles中使用的读/写缓冲区的大小，单位为KB,131072KB默认为64M-->
+		<name>io.file.buffer.size</name>
+		<value>131072</value>
+	</property>
+</configuration>
+coreEOF
+cat > ${install_path}/hadoop/etc/hadoop/hdfs-site.xml << hdfsEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+	<property>
+		<!--hadoop的副本数量，默认为3-->
+		<name>dfs.replication</name>
+		<value>1</value>
+	</property>
+	<property>
+		<!--在本地文件系统所在的NameNode的存储空间和持续化处理日志-->
+		<name>dfs.namenode.name.dir</name>
+		<value>${install_path}/hadoop/dfs/data</value>
+		</property>
+	<property>
+		<!--设置hdfs文件块大小，该处设置为256M-->
+		<name>dfs.blocksize</name>
+		<value>268435456</value>
+	</property>
+	<property>
+		<!--设置namenode的线程数量，处理datanode发出的rpc请求-->
+		<name>dfs.namenode.handler.count</name>
+		<value>100</value>
+	</property>
+</configuration>
+hdfsEOF
+cat >  ${install_path}/hadoop/etc/hadoop/yarn-site.xml << yarnEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+	<property>
+		<name>yarn.nodemanager.aux-services</name>
+		<value>mapreduce_shuffle</value>
+	</property>
+</configuration>
+yarnEOF
+cat > ${install_path}/hadoop/etc/hadoop/mapred-site.xml << mapredEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+	<property>
+		<name>mapreduce.framework.name</name>
+		<value>yarn</value>
+	</property>
+</configuration>
+mapredEOF
+cat > ${install_path}/hadoop/etc/hadoop/hadoop-env.sh << hadoopenv
+export 	JAVA_HOME=/root/java
+export HADOOP_CONF_DIR=\${HADOOP_CONF_DIR:-"/etc/hadoop"}
+for f in \$HADOOP_HOME/contrib/capacity-scheduler/*.jar; do
+  if [ "\$HADOOP_CLASSPATH" ]; then
+    export HADOOP_CLASSPATH=\$HADOOP_CLASSPATH:\$f
+  else
+    export HADOOP_CLASSPATH=\$f
+  fi
+done
+export HADOOP_OPTS="\$HADOOP_OPTS -Djava.net.preferIPv4Stack=true"
+export HADOOP_NAMENODE_OPTS="-Dhadoop.security.logger=\${HADOOP_SECURITY_LOGGER:-INFO,RFAS} -Dhdfs.audit.logger=\${HDFS_AUDIT_LOGGER:-INFO,NullAppender} \$HADOOP_NAMENODE_OPTS"
+export HADOOP_DATANODE_OPTS="-Dhadoop.security.logger=ERROR,RFAS \$HADOOP_DATANODE_OPTS"
+export HADOOP_SECONDARYNAMENODE_OPTS="-Dhadoop.security.logger=\${HADOOP_SECURITY_LOGGER:-INFO,RFAS} -Dhdfs.audit.logger=\${HDFS_AUDIT_LOGGER:-INFO,NullAppender} \$HADOOP_SECONDARYNAMENODE_OPTS"
+export HADOOP_NFS3_OPTS="\$HADOOP_NFS3_OPTS"
+export HADOOP_PORTMAP_OPTS="-Xmx512m \$HADOOP_PORTMAP_OPTS"
+export HADOOP_CLIENT_OPTS="-Xmx512m \$HADOOP_CLIENT_OPTS"
+export HADOOP_SECURE_DN_USER=\${HADOOP_SECURE_DN_USER}
+export HADOOP_SECURE_DN_LOG_DIR=\${HADOOP_LOG_DIR}/\${HADOOP_HDFS_USER}
+export HADOOP_PID_DIR=\${HADOOP_PID_DIR}
+export HADOOP_SECURE_DN_PID_DIR=\${HADOOP_PID_DIR}
+export HADOOP_IDENT_STRING=\$USER
+hadoopenv
+cat > ${install_path}/hadoop/etc/hadoop/slaves << slavesEOF
+master
+slavesEOF
+echo -e "==========namenode 格式化==========\n"
+hdfs namenode -format
+echo -e "==========启动hadoop==========\n"
+start-all.sh
+echo -e "==========查看jps守护进程==========\n" 
+jps
+echo -e "==========卸载mariadb==========\n"
+rpm -qa | grep mariadb
+rpm -e --nodeps mariadb-libs
+rpm -qa | grep mariadb
+echo -e "==========安装mysql==========\n" 
+systemctl stop mysqld
+rm -rf /usr/local/mysql
+mkdir /usr/local/mysql && tar -xzf ${software_path}/${mysql_name} -C /usr/local/mysql --strip-components 1
+echo -e "==========创建mysql用户和组==========\n"
+groupadd mysql
+useradd -r -g mysql mysql
+echo -e "==========创建mysql数据存储目录data和临时文件tmpdir===========\n"
+mkdir /usr/local/mysql/{data,tmpdir}
+echo -e "=========更改mysql文件所属的用户和组==========\n"
+chown -R mysql:mysql /usr/local/mysql
+/usr/local/mysql/bin/mysqld --initialize --user=mysql --basedir=/usr/local/mysql/ --datadir=/usr/local/mysql/data/  2>&1 |  tee /usr/local/mysql/initialize.log
+echo -e "==========编写my.cnf文件============\n"
+cat > /etc/my.cnf << cnfEOF
+[mysql]
+#设置mysql客户端默认字符集
+default-character-set=utf8
+# 使用自动补齐功能
+auto-rehash
+[mysqld]
+# 设置3306端口
+port=3306
+# 设置mysql的安装目录
+basedir=/usr/local/mysql
+# 设置mysql数据库的数据的存放目录
+datadir=/usr/local/mysql/data
+# 临时目录地址
+tmpdir=/usr/local/mysql/tmpdir
+#设置socke文件地址
+socket=/tmp/mysql.sock
+# 允许最大连接数
+max_connections=200
+# 服务端使用的字符集默认为8比特编码的latin1字符集
+character-set-server=utf8
+# 创建新表时将使用的默认存储引擎
+default-storage-engine=INNODB
+# 是否对sql语句大小写敏感，默认值0，1表示不敏感
+lower_case_table_names=1
+max_allowed_packet=16M
+cnfEOF
+echo -e "==========将mysql服务添加到系统服务列表==========\n"
+cp /usr/local/mysql/support-files/mysql.server /etc/init.d/mysqld
+chmod +x /etc/init.d/mysqld
+echo -e "==========启动MYSQL==========\n"
+/etc/init.d/mysqld start
+chkconfig --level 35 mysqld on
+chkconfig --add mysqld
+echo -e "=========查看mysql服务状态=========\n"
+service mysqld status
+echo -e "==========配置mysql环境变量==========\n"
+echo "export MYSQL_HOME=/usr/local/mysql" >> /etc/profile
+echo "export PATH=\$PATH:\$MYSQL_HOME/bin" >> /etc/profile
+source /etc/profile
+
+mysql_init_passwd=`grep "root@localhost: " /usr/local/mysql/initialize.log | cut -d " " -f11`
+echo -e "===========初始化密码为:${mysql_init_passwd}==============="
+echo -e "===========依次输入下面语句:=========================="
+mysql --connect-expired-password -uroot -p${mysql_init_passwd} << EOF2
+set password = password('password');
+flush privileges;
+use mysql
+update user set host='%' where user='root';
+select host,user from user;
+flush privileges;
+CREATE USER 'hive'@'%' IDENTIFIED BY 'password';
+GRANT ALL ON *.* TO 'hive'@'%';
+use mysql
+update user set host='%' where user='hive';
+flush privileges;
+exit
+EOF2
+echo -e "==========安装Hive==========\n"
+rm -rf ${install_path}/hive
+mkdir ${install_path}/hive && tar -xzf ${software_path}/${hive_name} -C ${install_path}/hive --strip-components 1
+echo -e "==========配置hive环境变量==========\n"
+echo "export HIVE_HOME=${install_path}/hive" >> /etc/profile
+echo "export PATH=\$PATH:\$HIVE_HOME/bin" >> /etc/profile
+source /etc/profile
+rm -rf ${software_path}/mysql_connect
+mkdir ${software_path}/mysql_connect && tar -xzf ${software_path}/${mysql_connect_name} -C ${software_path}/mysql_connect --strip-components 1
+echo -e "==========添加mysql驱动==========\n"
+cp ${software_path}/mysql_connect/mysql-connector-java-5.1.47-bin.jar ${install_path}/hive/lib
+cat > ${install_path}/hive/conf/hive-site.xml << hivesiteEOF
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+<configuration>
+	
+	<property>
+		<!--连接数据库URL-->
+		<name>javax.jdo.option.ConnectionURL</name>
+		<value>jdbc:mysql://master:3306/hive?createDatabaseIfNotExist=true&amp;useSSL=false</value>
+	</property>
+	
+	<property>
+		<!--连接数据驱动-->
+		<name>javax.jdo.option.ConnectionDriverName</name>
+		<value>com.mysql.jdbc.Driver</value>
+	</property>
+	
+	<property>
+		<!--数据库连接用户名-->
+		<name>javax.jdo.option.ConnectionUserName</name>
+		<value>hive</value>
+	</property>
+	
+	<property>
+		<!--数据库连接密码-->
+		<name>javax.jdo.option.ConnectionPassword</name>
+		<value>password</value>
+	</property>
+	
+	<property>
+		<!--指定HDFS内hive数据临时文件存放目录,启动hive>，HDFS自动创建-->
+		<name>hive.exec.scratchdir</name>
+		<value>/hive/warehouse/tmp</value>
+	</property>
+	
+	<property>
+		<!--指定HDFS内hive数据的存放目录，HDFS自动创建-->
+		<name>hive.metastore.warehouse.dir</name>
+		<value>/hive/warehouse/home</value>
+	</property>
+	
+	<property>
+		<!--客户端显示当前数据库名称信息-->
+		<name>hive.cli.print.header</name>
+		<value>true</value>
+	</property>
+	
+	<property>
+		<!--客户端显示当前数据库名称-->
+		<name>hive.cli.print.current.db</name>
+		<value>true</value>
+	</property>
+	
+	<property>
+		<!--支持正则匹配-->
+		<name>hive.support.quoted.identifiers</name>
+		<value>none</value>
+	</property>
+</configuration>
+hivesiteEOF
+echo -e "==========配置hive-env.sh==========\n"
+cat > ${install_path}/hive/conf/hive-env.sh << hiveenvEOF
+export HADOOP_HOME=${install_path}/hadoop >> ${install_path}/hive/conf/hive-env.sh
+export HIVE_CONF_DIR=${install_path}/hive/conf >> ${install_path}/hive/conf/hive-env.sh
+hiveenvEOF
+echo -e "==========删除不匹配jline.jar==========\n"
+rm -rf ${install_path}/hadoop/share/hadoop/yarn/lib/ jline-0.9.94.jar
+cp -f ${install_path}/hive/lib/jline-2.12.jar ${install_path}/hadoop/share/hadoop/yarn/lib/
+echo -e "==========hive初始化==========\n"
+schematool -dbType mysql -initSchema
+echo -e "==========安装Spark集群==========\n"
+rm -rf ${install_path}/spark
+mkdir ${install_path}/spark && tar -xzf ${software_path}/${spark_name} -C ${install_path}/spark --strip-components 1
+echo -e "==========配置spark环境变量==========\n"
+echo "SPARK_HOME=${install_path}/spark" >> /etc/profile
+echo "export PATH=\$PATH:\$SPARK_HOME/sbin:\$SPARK_HOME/bin" >> /etc/profile
+source /etc/profile
+echo -e "==========配置spark-env.sh==========\n"
+cp ${install_path}/spark/conf/spark-env.sh.template ${install_path}/spark/conf/spark-env.sh
+echo "export JAVA_HOME=${install_path}/java" >> ${install_path}/spark/conf/spark-env.sh
+echo "export SPARK_MASTER_IP=master" >> ${install_path}/spark/conf/spark-env.sh
+echo "export SPARK_WORKER_MEMORY=1G" >> ${install_path}/spark/conf/spark-env.sh
+echo "SPARK_WORKER_CORES=1" >> ${install_path}/spark/conf/spark-env.sh
+echo "export HADOOP_CONF_DIR=${install_path}/hadoop/etc/hadoop" >> ${install_path}/spark/conf/spark-env.sh
+cat > ${install_path}/spark/conf/slaves <<slavesEOF
+${HOSTNAME}
+slavesEOF
+echo -e "==========启动spark==========\n"
+${install_path}/spark/sbin/start-all.sh
+echo -e "==========jps查看守护进程=========\n"
+jps
+echo -e "===========安装Sqoop==========\n"
+rm -rf ${install_path}/sqoop
+mkdir ${install_path}/sqoop && tar -xzf ${software_path}/${sqoop_name} -C ${install_path}/sqoop --strip-components 1
+echo -e "===========配置sqoop环境变量===========\n"
+echo "export SQOOP_HOME=${install_path}/sqoop" >> /etc/profile
+echo "export PATH=\$PATH:\$SQOOP_HOME/bin" >> /etc/profile
+source /etc/profile
+echo -e "===========查看sqoop版本==========\n"
+sqoop version
+cp  ${software_path}/mysql_connect/mysql-connector-java-5.1.47.jar ${install_path}/sqoop/lib/
+echo -e "==========测试sqoop工具==========\n"
+sqoop list-databases --connect jdbc:mysql://${HOSTNAME}:3306 --username root --password password
+if [ $? -eq 0 ];then
+	jps
+	echo -e "=============全部部署完成==================\n"
+else
+	echo -e "==============sqoop工具部署失败============\n"
+fi
